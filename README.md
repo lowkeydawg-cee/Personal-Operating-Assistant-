@@ -12,6 +12,9 @@ A small web app that works as a second mind: it helps you turn thoughts into cla
 - **Reviews**: morning check-in, end-of-day, weekly, and monthly. Each ends in insights and decisions, not a summary, and can propose updates.
 - **About me** stores what P.O.A knows about you, always labeled as *told*, *inferred*, or *needs confirmation*. You can confirm, edit, delete, or mark things sensitive.
 - **Smart brains.** Quick chat goes to Groq. Tick **Think deeper** for Claude, and reviews always use Claude. If a brain is missing or down, the next one takes over, and each reply says which brain answered.
+- **Reminders** on any item, one-off or repeating (daily, weekdays, weekly, monthly), with snooze. Missed reminders arrive when P.O.A starts again.
+- **Daily nudges** for your morning check-in, evening review and weekly review, including what's due today.
+- **On your phone:** notifications with Done and Snooze buttons through the free ntfy app, and the full app on your home screen. See [Using P.O.A on your phone](docs/PHONE.md).
 - **Private mode** keeps all thinking on your computer through Ollama.
 - **Export** a Markdown snapshot to paste into Claude or any assistant as context (sensitive entries left out), or a full JSON backup.
 
@@ -58,6 +61,11 @@ This keeps the Claude bill small (it's only used when depth matters) while every
 | `POA_CLOUD_API_KEY_ENV` | `GROQ_API_KEY` | Which variable holds that key |
 | `POA_OLLAMA_HOST` | `http://localhost:11434` | Where Ollama runs |
 | `POA_LOCAL_MODEL` | `llama3.1:8b` | Local model (needs tool calling) |
+| `POA_NTFY_TOPIC` | (empty) | Turns on phone notifications ([guide](docs/PHONE.md)) |
+| `POA_NTFY_SERVER` | `https://ntfy.sh` | ntfy server to send through |
+| `POA_PUBLIC_URL` | (empty) | Address your phone uses to reach P.O.A, for notification buttons |
+| `POA_PASSCODE` | (empty) | Passcode for opening P.O.A from other devices |
+| `POA_HOST` | `127.0.0.1` | Set `0.0.0.0` to allow devices on your Wi-Fi (needs a passcode) |
 | `PORT` | `3000` | Port for the web app |
 | `POA_DATA_FILE` | `data/poa.json` | Where your data is stored |
 
@@ -74,13 +82,14 @@ P.O.A uses the same settings style and the same Groq key as [Jarvis](https://git
 - `src/server.js`: Express API and static file server
 - `src/llm.js`: the three brains, routing between them, and fallback
 - `src/assistant.js`: conversation, tools for proposing items/updates/context, review flows
+- `src/reminders.js`: reminders, nudges, and phone notifications
 - `src/insights.js`: attention flags and the Markdown snapshot
 - `src/store.js`: JSON file storage
 - `prompts/system.md`: the assistant's personality and operating rules
-- `public/`: the web interface (plain HTML, CSS, JavaScript, no build step)
+- `public/`: the web interface (plain HTML, CSS, JavaScript, no build step), installable as a phone app
 
 Run the tests with `npm test`. They use stand-in Claude, Groq and Ollama servers, so no key or network is needed.
 
 ## Ideas for later
 
-Reminders and notifications, calendar sync, a phone-friendly installable app, hosted deployment with login, and merging into Jarvis for voice access.
+Calendar sync, patterns over time (what keeps slipping, when your energy is best), and merging into Jarvis for voice access.

@@ -29,6 +29,8 @@ const TOOL_DEFS = [
               scheduled: { type: "string", description: "YYYY-MM-DD when the user plans to do it" },
               review_date: { type: "string", description: "YYYY-MM-DD, recommended for goals and projects" },
               next_action: { type: "string", description: "For goals/projects: the smallest realistic next step" },
+              remind_at: { type: "string", description: "YYYY-MM-DDTHH:MM local time to send a reminder to the user's phone. Use when they ask to be reminded or when a commitment needs a nudge." },
+              repeat: { type: "string", enum: store.REPEATS, description: "Repeat the reminder. Default none." },
               parent_id: { type: "string", description: "8-character id of an existing parent item, if any" },
             },
             required: ["type", "title"],
@@ -61,6 +63,8 @@ const TOOL_DEFS = [
                   review_date: { type: "string" },
                   next_action: { type: "string" },
                   notes: { type: "string" },
+                  remind_at: { type: "string", description: "YYYY-MM-DDTHH:MM local time" },
+                  repeat: { type: "string", enum: store.REPEATS },
                   type: { type: "string", enum: store.ITEM_TYPES },
                 },
               },
@@ -116,7 +120,7 @@ function recordProposals(db, toolName, input, origin) {
 }
 
 function buildSystem(db) {
-  const prefs = `Today is ${today()} (${new Date().toLocaleDateString("en-US", { weekday: "long" })}). Proactivity preference: ${db.settings.proactivity}.`;
+  const prefs = `Now is ${require("./reminders").localStamp()} local time (${new Date().toLocaleDateString("en-US", { weekday: "long" })}). Proactivity preference: ${db.settings.proactivity}.`;
   return `${SYSTEM_PROMPT}
 
 ${prefs}
