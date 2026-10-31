@@ -12,7 +12,7 @@ const ITEM_TYPES = [
 const CONTEXT_SOURCES = ["told", "inferred", "to_confirm"];
 
 function emptyDb() {
-  return { items: [], context: [], reviews: [], chat: [], settings: { proactivity: "medium" } };
+  return { items: [], context: [], reviews: [], chat: [], settings: { proactivity: "medium", private: false } };
 }
 
 function load() {

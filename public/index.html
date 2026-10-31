@@ -58,6 +58,7 @@
         <div class="row">
           <button type="submit">Send</button>
           <button type="button" class="ghost" id="chat-clear">Clear conversation</button>
+          <label class="inline" title="Private keeps all thinking on this computer with Ollama"><input type="checkbox" class="private-toggle"> Private</label>
           <span class="hint" id="model-name"></span>
         </div>
       </form>
@@ -111,10 +112,13 @@
           </label>
         </div>
         <div class="row">
-          <a class="button ghost" href="/api/export.md" target="_blank">Snapshot for Claude (Markdown)</a>
+          <label class="inline"><input type="checkbox" class="private-toggle"> Private mode: keep all thinking on this computer (uses Ollama)</label>
+        </div>
+        <div class="row">
+          <a class="button ghost" href="/api/export.md" target="_blank">Snapshot for any assistant (Markdown)</a>
           <a class="button ghost" href="/api/export.json">Download full backup (JSON)</a>
         </div>
-        <p class="hint">The Markdown snapshot leaves out anything marked sensitive. Paste it into a Claude project to give it your current context.</p>
+        <p class="hint">The Markdown snapshot leaves out anything marked sensitive. Paste it into Claude, Jarvis or any assistant to give it your current context.</p>
       </div>
     </section>
   </main>

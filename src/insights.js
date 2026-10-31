@@ -32,8 +32,8 @@ function computeFlags(db) {
   return flags;
 }
 
-// A plain-text snapshot of the user's world, given to Claude as context and
-// also exported as Markdown so it can be pasted into other Claude projects.
+// A plain-text snapshot of the user's world, given to the model as context and
+// also exported as Markdown so it can be pasted into Claude or other assistants.
 function snapshotMarkdown(db, { includeDone = false } = {}) {
   const lines = [];
   const t = today();

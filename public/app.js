@@ -122,7 +122,11 @@ function proposalsHtml(list) {
 
 function render() {
   const open = state.items.filter((i) => i.status === "open");
-  $("#model-name").textContent = `Model: ${state.model}`;
+  const b = state.brain;
+  $("#model-name").textContent = state.settings.private || b.provider === "local"
+    ? `Thinking locally: ${b.local}`
+    : b.cloud ? `Brain: ${b.cloud}${b.provider === "hybrid" ? `, falls back to ${b.local}` : ""}` : `No cloud key set, using ${b.local}`;
+  $$(".private-toggle").forEach((el) => (el.checked = !!state.settings.private));
 
   // Today
   $("#proposals").innerHTML = proposalsHtml(state.proposals);
@@ -137,7 +141,7 @@ function render() {
 
   // Chat
   $("#chat-log").innerHTML = state.chat.length
-    ? state.chat.map((m) => `<div class="msg ${m.role}">${m.role === "assistant" ? md(m.content) : esc(m.content)}</div>`).join("")
+    ? state.chat.map((m) => `<div class="msg ${m.role}">${m.role === "assistant" ? md(m.content) + (m.brain === "local" ? '<div class="hint">answered locally</div>' : "") : esc(m.content)}</div>`).join("")
     : '<div class="empty">Tell me what\'s on your mind. I can help you get clear on it, plan it, decide, or map it out.</div>';
   $("#chat-proposals").innerHTML = proposalsHtml(state.proposals);
 
@@ -336,6 +340,11 @@ document.addEventListener("click", (e) => {
     await refresh();
   });
 });
+$$(".private-toggle").forEach((el) => el.addEventListener("change", (e) => busy(null, async () => {
+  await api("PUT", "/api/settings", { private: e.target.checked });
+  toast(e.target.checked ? "Private on: thinking stays on this computer" : "Private off");
+  await refresh();
+})));
 $("#proactivity").addEventListener("change", (e) => busy(null, async () => { await api("PUT", "/api/settings", { proactivity: e.target.value }); toast("Saved"); }));
 
 refresh().catch((e) => toast(e.message));

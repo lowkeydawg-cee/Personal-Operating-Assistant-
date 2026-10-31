@@ -1,4 +1,5 @@
-// End-to-end test against a stub Claude API (no real key or network needed).
+// End-to-end tests against stub "cloud" and "local" model servers that speak the
+// OpenAI chat-completions format. No real keys or network needed.
 const { test, before, after } = require("node:test");
 const assert = require("node:assert");
 const http = require("node:http");
@@ -8,34 +9,44 @@ const path = require("node:path");
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "poa-"));
 process.env.POA_DATA_FILE = path.join(tmp, "poa.json");
-process.env.ANTHROPIC_API_KEY = "test-key";
+process.env.GROQ_API_KEY = "test-key";
+process.env.POA_PROVIDER = "hybrid";
 
-let stub, server, base, calls = [];
-before(async () => {
-  stub = http.createServer((req, res) => {
+const calls = { cloud: [], local: [] };
+let cloudDown = false;
+
+function stubModel(name) {
+  return http.createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
+      if (name === "cloud" && cloudDown) { res.statusCode = 503; return res.end('{"error":{"message":"down"}}'); }
       const json = JSON.parse(body);
-      calls.push({ json, headers: req.headers });
-      const last = json.messages[json.messages.length - 1];
-      const isToolResult = Array.isArray(last.content) && last.content[0]?.type === "tool_result";
-      const content = isToolResult
-        ? [{ type: "text", text: "### Next step\nCall the dentist today." }]
-        : [{ type: "tool_use", id: "tu_1", name: "propose_items", input: { items: [{ type: "task", title: "Call the dentist", priority: "high", scheduled: "2026-11-01" }] } }];
+      calls[name].push({ json, headers: req.headers, url: req.url });
+      const last = json.messages.at(-1);
+      const message = last.role === "tool"
+        ? { role: "assistant", content: `### Next step\nCall the dentist today. (${name})` }
+        : { role: "assistant", content: null, tool_calls: [{ id: "call_1", type: "function", function: {
+            name: "propose_items",
+            arguments: JSON.stringify({ items: [{ type: "task", title: "Call the dentist", priority: "high", scheduled: "2026-11-01" }] }) } }] };
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ id: "msg_1", type: "message", role: "assistant", model: json.model, content,
-        stop_reason: isToolResult ? "end_turn" : "tool_use", stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }));
+      res.end(JSON.stringify({ id: "x", choices: [{ index: 0, message, finish_reason: message.tool_calls ? "tool_calls" : "stop" }] }));
     });
   });
-  await new Promise((r) => stub.listen(0, r));
-  process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${stub.address().port}`;
+}
+
+let cloud, local, server, base;
+before(async () => {
+  cloud = stubModel("cloud"); local = stubModel("local");
+  await Promise.all([new Promise((r) => cloud.listen(0, r)), new Promise((r) => local.listen(0, r))]);
+  process.env.POA_CLOUD_BASE_URL = `http://127.0.0.1:${cloud.address().port}/openai/v1`;
+  process.env.POA_OLLAMA_HOST = `http://127.0.0.1:${local.address().port}`;
   const app = require("../src/server");
   server = app.listen(0);
   await new Promise((r) => server.on("listening", r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
-after(() => { server.close(); stub.close(); });
+after(() => { server.close(); cloud.close(); local.close(); });
 
 const call = async (method, url, body) => {
   const res = await fetch(base + url, { method, headers: { "content-type": "application/json" }, body: body && JSON.stringify(body) });
@@ -56,36 +67,57 @@ test("items: create, postpone counts, complete", async () => {
   assert.ok(done.completed_at);
 });
 
-test("chat: Claude proposals are pending until accepted", async () => {
+test("chat uses the cloud brain; proposals wait for acceptance", async () => {
   const { status, data } = await call("POST", "/api/chat", { text: "I need to sort out my teeth" });
   assert.equal(status, 200, JSON.stringify(data));
+  assert.equal(data.brain, "cloud");
   assert.match(data.reply, /dentist/);
   assert.equal(data.proposals.length, 1);
-  const req = calls[0].json;
-  assert.equal(req.model, "claude-opus-5-5");
-  assert.equal(req.fallbacks, "default");
-  assert.equal(req.output_config.effort, "medium");
-  assert.match(calls[0].headers["anthropic-beta"], /server-side-fallback-2026-07-01/);
-  assert.match(req.system[0].text, /Personal Operating Assistant/);
-  // Second call carries the tool result back.
-  assert.equal(calls[1].json.messages.at(-1).content[0].type, "tool_result");
+  const req = calls.cloud[0];
+  assert.equal(req.url, "/openai/v1/chat/completions");
+  assert.equal(req.headers.authorization, "Bearer test-key");
+  assert.equal(req.json.model, "llama-3.3-70b-versatile");
+  assert.equal(req.json.messages[0].role, "system");
+  assert.match(req.json.messages[0].content, /Personal Operating Assistant/);
+  assert.equal(req.json.tools[0].type, "function");
+  // The second request carries the tool result back.
+  const second = calls.cloud[1].json.messages;
+  assert.equal(second.at(-2).tool_calls[0].id, "call_1");
+  assert.equal(second.at(-1).role, "tool");
+  assert.equal(calls.local.length, 0);
 
   let { data: s } = await call("GET", "/api/state");
   assert.ok(!s.items.some((i) => i.title === "Call the dentist"));
-  assert.equal(s.proposals.length, 1);
   await call("POST", `/api/proposals/${s.proposals[0].id}/accept`);
   ({ data: s } = await call("GET", "/api/state"));
   assert.ok(s.items.some((i) => i.title === "Call the dentist" && i.priority === "high"));
   assert.equal(s.proposals.length, 0);
-  assert.equal(s.chat.length, 2);
+});
+
+test("falls back to local Ollama when the cloud is down", async () => {
+  cloudDown = true;
+  const { status, data } = await call("POST", "/api/chat", { text: "hello" });
+  cloudDown = false;
+  assert.equal(status, 200, JSON.stringify(data));
+  assert.equal(data.brain, "local");
+  assert.equal(calls.local[0].url, "/v1/chat/completions");
+  assert.equal(calls.local[0].json.model, "llama3.1:8b");
+});
+
+test("private mode never calls the cloud", async () => {
+  await call("PUT", "/api/settings", { private: true });
+  const before = calls.cloud.length;
+  const { data } = await call("POST", "/api/chat", { text: "something private" });
+  assert.equal(data.brain, "local");
+  assert.equal(calls.cloud.length, before);
+  await call("PUT", "/api/settings", { private: false });
 });
 
 test("reviews and export", async () => {
-  calls = [];
   const { status, data } = await call("POST", "/api/reviews", { kind: "weekly", answers: ["a", "b"] });
   assert.equal(status, 200, JSON.stringify(data));
   assert.equal(data.review.kind, "weekly");
-  assert.match(calls[0].json.messages[0].content, /weekly review/);
+  assert.match(calls.cloud.at(-2).json.messages[1].content, /weekly review/);
   await call("POST", "/api/context", { category: "value", text: "Family first", source: "told" });
   await call("POST", "/api/context", { category: "health", text: "Private thing", source: "told", sensitive: true });
   const { data: mdText } = await call("GET", "/api/export.md");
