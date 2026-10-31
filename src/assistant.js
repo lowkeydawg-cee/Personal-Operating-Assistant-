@@ -130,12 +130,12 @@ ${snapshotMarkdown(db)}`;
 const TOOLS = TOOL_DEFS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }));
 
 // Runs a request, handling tool calls (which just record proposals) until the model finishes.
-async function run(db, messages, origin) {
+async function run(db, messages, origin, task = "quick") {
   const proposals = [];
   const convo = [{ role: "system", content: buildSystem(db) }, ...messages];
   let brain = null;
   for (let turn = 0; turn < 4; turn++) {
-    const result = await llm.chat({ messages: convo, tools: TOOLS, privateMode: !!db.settings.private });
+    const result = await llm.chat({ messages: convo, tools: TOOLS, task, privateMode: !!db.settings.private });
     brain = result.brain;
     const msg = result.message;
     const toolCalls = msg.tool_calls || [];
@@ -144,7 +144,7 @@ async function run(db, messages, origin) {
       return { text: text || (proposals.length ? "I've put some suggestions above for you to look at." : "(No response text.)"), proposals, brain };
     }
 
-    convo.push({ role: "assistant", content: msg.content || null, tool_calls: toolCalls });
+    convo.push({ role: "assistant", content: msg.content || null, tool_calls: toolCalls, ...(msg._anthropic ? { _anthropic: msg._anthropic } : {}) });
     for (const call of toolCalls) {
       let input = call.function?.arguments;
       if (typeof input === "string") {
@@ -164,10 +164,10 @@ async function run(db, messages, origin) {
   return { text: "I've put some suggestions above. Let me know what you think.", proposals, brain };
 }
 
-async function chat(db, userText) {
+async function chat(db, userText, { deep = false } = {}) {
   const history = db.chat.slice(-30).map((m) => ({ role: m.role, content: m.content }));
   history.push({ role: "user", content: userText });
-  return run(db, history, "chat");
+  return run(db, history, "chat", deep ? "deep" : "quick");
 }
 
 const REVIEW_QUESTIONS = {
@@ -216,7 +216,7 @@ async function review(db, kind, answers) {
   const qs = REVIEW_QUESTIONS[kind];
   const body = qs.map((q, i) => `**${q}**\n${(answers[i] || "").trim() || "(no answer)"}`).join("\n\n");
   const prompt = `I'm doing my ${kind} review.\n\n${body}\n\n---\n${REVIEW_INSTRUCTIONS[kind]}`;
-  return run(db, [{ role: "user", content: prompt }], `review:${kind}`);
+  return run(db, [{ role: "user", content: prompt }], `review:${kind}`, "deep");
 }
 
 module.exports = { chat, review, REVIEW_QUESTIONS };

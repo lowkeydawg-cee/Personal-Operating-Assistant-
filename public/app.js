@@ -8,6 +8,7 @@ const TYPE_LABELS = {
   habit: "Habit", decision: "Decision", commitment: "Commitment", open_loop: "Open loop", thought: "Thought",
 };
 const TYPE_ORDER = ["commitment", "task", "project", "goal", "habit", "decision", "open_loop", "thought", "direction", "value"];
+const BRAIN_LABELS = { claude: "Claude", groq: "Groq", local: "Ollama (on this computer)", cloud: "Groq" };
 const SOURCE_LABELS = { told: "you told me", inferred: "inferred", to_confirm: "needs confirmation" };
 
 // ---------- helpers ----------
@@ -123,9 +124,9 @@ function proposalsHtml(list) {
 function render() {
   const open = state.items.filter((i) => i.status === "open");
   const b = state.brain;
-  $("#model-name").textContent = state.settings.private || b.provider === "local"
-    ? `Thinking locally: ${b.local}`
-    : b.cloud ? `Brain: ${b.cloud}${b.provider === "hybrid" ? `, falls back to ${b.local}` : ""}` : `No cloud key set, using ${b.local}`;
+  const on = [b.claude && "Claude", b.groq && "Groq", "Ollama"].filter(Boolean).join(", ");
+  $("#model-name").textContent = state.settings.private || b.provider === "local" ? `Private: thinking locally with ${b.local}` : `Brains: ${on}`;
+  $("#chat-deep").disabled = !!state.settings.private;
   $$(".private-toggle").forEach((el) => (el.checked = !!state.settings.private));
 
   // Today
@@ -141,7 +142,7 @@ function render() {
 
   // Chat
   $("#chat-log").innerHTML = state.chat.length
-    ? state.chat.map((m) => `<div class="msg ${m.role}">${m.role === "assistant" ? md(m.content) + (m.brain === "local" ? '<div class="hint">answered locally</div>' : "") : esc(m.content)}</div>`).join("")
+    ? state.chat.map((m) => `<div class="msg ${m.role}">${m.role === "assistant" ? md(m.content) + (m.brain ? `<div class="hint">${BRAIN_LABELS[m.brain] || m.brain}</div>` : "") : esc(m.content)}</div>`).join("")
     : '<div class="empty">Tell me what\'s on your mind. I can help you get clear on it, plan it, decide, or map it out.</div>';
   $("#chat-proposals").innerHTML = proposalsHtml(state.proposals);
 
@@ -181,14 +182,14 @@ async function busy(btn, fn) {
   try { await fn(); } catch (e) { toast(e.message); } finally { if (btn) btn.disabled = false; }
 }
 
-async function sendChat(text) {
+async function sendChat(text, deep = false) {
   showTab("chat");
   const log = $("#chat-log");
   if (!state.chat.length) log.innerHTML = "";
   log.insertAdjacentHTML("beforeend", `<div class="msg user">${esc(text)}</div><div class="msg assistant thinking">Thinking...</div>`);
   window.scrollTo(0, document.body.scrollHeight);
   try {
-    await api("POST", "/api/chat", { text });
+    await api("POST", "/api/chat", { text, deep });
   } catch (e) {
     toast(e.message);
   }
@@ -213,7 +214,7 @@ $("#chat-form").addEventListener("submit", (e) => {
   const text = $("#chat-text").value.trim();
   if (!text) return;
   $("#chat-text").value = "";
-  busy(e.submitter, () => sendChat(text));
+  busy(e.submitter, () => sendChat(text, $("#chat-deep").checked));
 });
 $("#chat-text").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#chat-form").requestSubmit(); }

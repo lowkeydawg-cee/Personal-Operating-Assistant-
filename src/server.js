@@ -21,8 +21,6 @@ function withDb(handler) {
       console.error(err);
       const status = err.status && err.status >= 400 && err.status < 600 ? err.status : 500;
       let message = err.message || "Something went wrong";
-      if (err.status === 401 && !/GROQ_API_KEY/.test(message)) message = "The cloud API key was rejected. Check GROQ_API_KEY in your .env file.";
-      if (err.status === 429) message = "The cloud model's free-tier limit was hit. Wait a minute, or turn on Private to use Ollama.";
       res.status(status).json({ error: message });
     }
   };
@@ -102,7 +100,7 @@ app.post("/api/proposals/:id/:action", withDb((db, req, res) => {
 app.post("/api/chat", withDb(async (db, req) => {
   const text = String(req.body.text || "").trim();
   if (!text) throw Object.assign(new Error("Message is empty"), { status: 400 });
-  const { text: reply, proposals, brain } = await assistant.chat(db, text);
+  const { text: reply, proposals, brain } = await assistant.chat(db, text, { deep: !!req.body.deep });
   db.chat.push({ role: "user", content: text, at: store.now() });
   db.chat.push({ role: "assistant", content: reply, at: store.now(), brain, proposal_ids: proposals.map((p) => p.id) });
   return { reply, proposals, brain };
@@ -144,7 +142,7 @@ if (require.main === module) {
     console.log(`Personal Operating Assistant running at http://localhost:${PORT}`);
     console.log(`Data file: ${store.DATA_FILE}`);
     const b = llm.describe();
-    console.log(`Brain: ${b.provider}. Cloud: ${b.cloud || "not set (add GROQ_API_KEY to .env)"}. Local: ${b.local}.`);
+    console.log(`Brains (${b.provider}): Claude ${b.claude || "off (no ANTHROPIC_API_KEY)"}, Groq ${b.groq || "off (no GROQ_API_KEY)"}, local ${b.local}.`);
   });
 }
 
