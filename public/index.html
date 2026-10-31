@@ -4,6 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>P.O.A</title>
+  <meta name="theme-color" content="#2f6f62">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="P.O.A">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -35,11 +41,13 @@
         </select>
         <button type="submit">Capture</button>
       </form>
+      <div id="notifications"></div>
       <div id="proposals"></div>
       <div class="grid">
         <div class="card"><h2>Needs attention</h2><div id="flags"></div></div>
         <div class="card"><h2>Today</h2><div id="today-list"></div></div>
       </div>
+      <div class="card"><h2>Upcoming reminders</h2><div id="reminders-list"></div></div>
       <div class="card"><h2>Quick start</h2>
         <div class="row">
           <button class="ghost" data-start-review="morning">Morning check-in</button>
@@ -58,6 +66,8 @@
         <div class="row">
           <button type="submit">Send</button>
           <button type="button" class="ghost" id="chat-clear">Clear conversation</button>
+          <label class="inline" title="Use Claude for this message: better for plans, decisions and hard thinking"><input type="checkbox" id="chat-deep"> Think deeper</label>
+          <label class="inline" title="Private keeps all thinking on this computer with Ollama"><input type="checkbox" class="private-toggle"> Private</label>
           <span class="hint" id="model-name"></span>
         </div>
       </form>
@@ -100,6 +110,31 @@
       </form>
       <div id="context-list"></div>
       <div class="card">
+        <h2>Reminders and nudges</h2>
+        <form id="nudges-form">
+          <label class="inline"><input type="checkbox" name="enabled"> Send daily nudges for my reviews</label>
+          <div class="row" style="margin-top:8px">
+            <label>Morning check-in <input type="time" name="morning"></label>
+            <label>Evening review <input type="time" name="evening"></label>
+            <label>Weekly review
+              <select name="weekly_day">
+                <option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option>
+                <option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option>
+              </select>
+            </label>
+            <label>at <input type="time" name="weekly_time"></label>
+          </div>
+          <button type="submit" class="ghost">Save nudge times</button>
+        </form>
+        <h2 style="margin-top:16px">Phone</h2>
+        <div id="phone-status" class="hint"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="ghost" id="test-notification">Send a test notification</button>
+          <button class="ghost" id="enable-browser-notifications">Allow notifications in this browser</button>
+        </div>
+        <p class="hint">Setup guide: <a href="https://github.com/lowkeydawg-cee/Personal-Operating-Assistant-/blob/main/docs/PHONE.md" target="_blank">Using P.O.A on your phone</a></p>
+      </div>
+      <div class="card">
         <h2>Settings and export</h2>
         <div class="row">
           <label>Proactivity
@@ -111,10 +146,13 @@
           </label>
         </div>
         <div class="row">
-          <a class="button ghost" href="/api/export.md" target="_blank">Snapshot for Claude (Markdown)</a>
+          <label class="inline"><input type="checkbox" class="private-toggle"> Private mode: keep all thinking on this computer (uses Ollama)</label>
+        </div>
+        <div class="row">
+          <a class="button ghost" href="/api/export.md" target="_blank">Snapshot for any assistant (Markdown)</a>
           <a class="button ghost" href="/api/export.json">Download full backup (JSON)</a>
         </div>
-        <p class="hint">The Markdown snapshot leaves out anything marked sensitive. Paste it into a Claude project to give it your current context.</p>
+        <p class="hint">The Markdown snapshot leaves out anything marked sensitive. Paste it into Claude, Jarvis or any assistant to give it your current context.</p>
       </div>
     </section>
   </main>
@@ -135,6 +173,18 @@
         <label>Review on <input type="date" name="review_date"></label>
       </div>
       <label>Next action <input name="next_action" placeholder="Smallest realistic next step"></label>
+      <div class="row">
+        <label>Remind me at <input type="datetime-local" name="remind_at"></label>
+        <label>Repeat
+          <select name="repeat">
+            <option value="none">Don't repeat</option>
+            <option value="daily">Every day</option>
+            <option value="weekdays">Weekdays</option>
+            <option value="weekly">Every week</option>
+            <option value="monthly">Every month</option>
+          </select>
+        </label>
+      </div>
       <label>Part of <select name="parent_id"><option value="">(none)</option></select></label>
       <label>Reason for change (optional, helps reviews) <input name="reason"></label>
       <div class="row">

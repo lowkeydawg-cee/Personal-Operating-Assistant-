@@ -1,7 +1,9 @@
 // Proactive flags computed locally (no AI call needed): the things a good
 // assistant should notice without being asked.
+// Local date (this computer's time zone), matching reminder times.
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function computeFlags(db) {
@@ -32,8 +34,8 @@ function computeFlags(db) {
   return flags;
 }
 
-// A plain-text snapshot of the user's world, given to Claude as context and
-// also exported as Markdown so it can be pasted into other Claude projects.
+// A plain-text snapshot of the user's world, given to the model as context and
+// also exported as Markdown so it can be pasted into Claude or other assistants.
 function snapshotMarkdown(db, { includeDone = false } = {}) {
   const lines = [];
   const t = today();
@@ -65,6 +67,7 @@ function snapshotMarkdown(db, { includeDone = false } = {}) {
       if (i.due) bits.push(`due ${i.due}`);
       if (i.scheduled) bits.push(`scheduled ${i.scheduled}`);
       if (i.review_date) bits.push(`review ${i.review_date}`);
+      if (i.remind_at && !i.reminder_fired) bits.push(`reminder ${i.remind_at.replace("T", " ")}${i.repeat && i.repeat !== "none" ? ` (${i.repeat})` : ""}`);
       if (i.postpone_count) bits.push(`postponed ${i.postpone_count}x`);
       const parent = i.parent_id && db.items.find((p) => p.id === i.parent_id);
       if (parent) bits.push(`part of "${parent.title}"`);

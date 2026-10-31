@@ -65,3 +65,11 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 8px; font-size: 14px; z-index: 10; }
 .review-entry summary { cursor: pointer; padding: 6px 0; }
 .empty { color: var(--muted); font-size: 14px; }
+.notice { border-color: var(--accent); }
+code { font-size: 12px; background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+@media (max-width: 600px) {
+  header, main { padding-left: 12px; padding-right: 12px; }
+  .msg { max-width: 100%; }
+  .capture select, .capture button { flex: 1; }
+  nav button { padding: 8px 9px; }
+}

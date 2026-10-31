@@ -1,22 +1,14 @@
-// Talks to Claude. Claude can propose changes through tools; proposals are
+// Talks to the model (see llm.js). The model can propose changes through tools; proposals are
 // stored as "pending" and only applied when the user accepts them in the UI.
 const fs = require("fs");
 const path = require("path");
-const Anthropic = require("@anthropic-ai/sdk");
+const llm = require("./llm");
 const { snapshotMarkdown, today } = require("./insights");
 const store = require("./store");
 
-const MODEL = process.env.POA_MODEL || "claude-opus-5-5";
-const EFFORT = process.env.POA_EFFORT || "medium";
 const SYSTEM_PROMPT = fs.readFileSync(path.join(__dirname, "..", "prompts", "system.md"), "utf8");
 
-let client = null;
-function getClient() {
-  if (!client) client = new Anthropic(); // reads ANTHROPIC_API_KEY
-  return client;
-}
-
-const TOOLS = [
+const TOOL_DEFS = [
   {
     name: "propose_items",
     description:
@@ -37,6 +29,8 @@ const TOOLS = [
               scheduled: { type: "string", description: "YYYY-MM-DD when the user plans to do it" },
               review_date: { type: "string", description: "YYYY-MM-DD, recommended for goals and projects" },
               next_action: { type: "string", description: "For goals/projects: the smallest realistic next step" },
+              remind_at: { type: "string", description: "YYYY-MM-DDTHH:MM local time to send a reminder to the user's phone. Use when they ask to be reminded or when a commitment needs a nudge." },
+              repeat: { type: "string", enum: store.REPEATS, description: "Repeat the reminder. Default none." },
               parent_id: { type: "string", description: "8-character id of an existing parent item, if any" },
             },
             required: ["type", "title"],
@@ -69,6 +63,8 @@ const TOOLS = [
                   review_date: { type: "string" },
                   next_action: { type: "string" },
                   notes: { type: "string" },
+                  remind_at: { type: "string", description: "YYYY-MM-DDTHH:MM local time" },
+                  repeat: { type: "string", enum: store.REPEATS },
                   type: { type: "string", enum: store.ITEM_TYPES },
                 },
               },
@@ -124,65 +120,58 @@ function recordProposals(db, toolName, input, origin) {
 }
 
 function buildSystem(db) {
-  const prefs = `Today is ${today()} (${new Date().toLocaleDateString("en-US", { weekday: "long" })}). Proactivity preference: ${db.settings.proactivity}.`;
-  return [
-    { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-    { type: "text", text: `${prefs}\n\nCurrent state of the user's system:\n\n${snapshotMarkdown(db)}` },
-  ];
+  const prefs = `Now is ${require("./reminders").localStamp()} local time (${new Date().toLocaleDateString("en-US", { weekday: "long" })}). Proactivity preference: ${db.settings.proactivity}.`;
+  return `${SYSTEM_PROMPT}
+
+${prefs}
+
+Current state of the user's system:
+
+${snapshotMarkdown(db)}`;
 }
 
-// Runs a request, handling tool calls (which just record proposals) until Claude finishes.
-async function run(db, messages, origin) {
+// OpenAI-style tool format, understood by Groq, Ollama and other compatible APIs.
+const TOOLS = TOOL_DEFS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+
+// Runs a request, handling tool calls (which just record proposals) until the model finishes.
+async function run(db, messages, origin, task = "quick") {
   const proposals = [];
-  const convo = [...messages];
+  const convo = [{ role: "system", content: buildSystem(db) }, ...messages];
+  let brain = null;
   for (let turn = 0; turn < 4; turn++) {
-    const response = await getClient().beta.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      output_config: { effort: EFFORT },
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      system: buildSystem(db),
-      tools: TOOLS,
-      messages: convo,
-    });
-
-    if (response.stop_reason === "refusal") {
-      return { text: "I can't help with that one. Could you rephrase or tell me more about what you need?", proposals };
+    const result = await llm.chat({ messages: convo, tools: TOOLS, task, privateMode: !!db.settings.private });
+    brain = result.brain;
+    const msg = result.message;
+    const toolCalls = msg.tool_calls || [];
+    if (!toolCalls.length) {
+      const text = (msg.content || "").trim();
+      return { text: text || (proposals.length ? "I've put some suggestions above for you to look at." : "(No response text.)"), proposals, brain };
     }
 
-    const toolUses = response.content.filter((b) => b.type === "tool_use");
-    if (response.stop_reason !== "tool_use" || toolUses.length === 0) {
-      const text = response.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-      return { text: text || "(No response text.)", proposals };
-    }
-
-    convo.push({ role: "assistant", content: response.content });
-    const results = toolUses.map((tu) => {
-      let input = tu.input;
+    convo.push({ role: "assistant", content: msg.content || null, tool_calls: toolCalls, ...(msg._anthropic ? { _anthropic: msg._anthropic } : {}) });
+    for (const call of toolCalls) {
+      let input = call.function?.arguments;
       if (typeof input === "string") {
         try { input = JSON.parse(input); } catch { input = {}; }
       }
-      const created = recordProposals(db, tu.name, input || {}, origin);
+      const created = recordProposals(db, call.function?.name, input || {}, origin);
       proposals.push(...created);
-      return {
-        type: "tool_result",
-        tool_use_id: tu.id,
+      convo.push({
+        role: "tool",
+        tool_call_id: call.id,
         content: created.length
-          ? `${created.length} proposal(s) shown to the user for confirmation. They are NOT saved yet.`
-          : "No valid proposals found in the input.",
-        is_error: created.length === 0,
-      };
-    });
-    convo.push({ role: "user", content: results });
+          ? `${created.length} proposal(s) shown to the user for confirmation. They are NOT saved yet. Now reply to the user in plain words.`
+          : "Error: no valid proposals found in the input. Check the argument format.",
+      });
+    }
   }
-  return { text: "I proposed some changes above. Let me know what you think.", proposals };
+  return { text: "I've put some suggestions above. Let me know what you think.", proposals, brain };
 }
 
-async function chat(db, userText) {
+async function chat(db, userText, { deep = false } = {}) {
   const history = db.chat.slice(-30).map((m) => ({ role: m.role, content: m.content }));
   history.push({ role: "user", content: userText });
-  return run(db, history, "chat");
+  return run(db, history, "chat", deep ? "deep" : "quick");
 }
 
 const REVIEW_QUESTIONS = {
@@ -231,7 +220,7 @@ async function review(db, kind, answers) {
   const qs = REVIEW_QUESTIONS[kind];
   const body = qs.map((q, i) => `**${q}**\n${(answers[i] || "").trim() || "(no answer)"}`).join("\n\n");
   const prompt = `I'm doing my ${kind} review.\n\n${body}\n\n---\n${REVIEW_INSTRUCTIONS[kind]}`;
-  return run(db, [{ role: "user", content: prompt }], `review:${kind}`);
+  return run(db, [{ role: "user", content: prompt }], `review:${kind}`, "deep");
 }
 
-module.exports = { chat, review, REVIEW_QUESTIONS, MODEL };
+module.exports = { chat, review, REVIEW_QUESTIONS };

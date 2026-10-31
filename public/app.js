@@ -8,6 +8,16 @@ const TYPE_LABELS = {
   habit: "Habit", decision: "Decision", commitment: "Commitment", open_loop: "Open loop", thought: "Thought",
 };
 const TYPE_ORDER = ["commitment", "task", "project", "goal", "habit", "decision", "open_loop", "thought", "direction", "value"];
+const BRAIN_LABELS = { claude: "Claude", groq: "Groq", local: "Ollama (on this computer)", cloud: "Groq" };
+const REPEAT_LABELS = { daily: "every day", weekdays: "on weekdays", weekly: "every week", monthly: "every month" };
+function fmtWhen(stamp) {
+  const [d, t] = stamp.split("T");
+  const todayStr = state.today;
+  const tm = new Date(todayStr + "T12:00"); tm.setDate(tm.getDate() + 1);
+  const tomorrow = `${tm.getFullYear()}-${String(tm.getMonth() + 1).padStart(2, "0")}-${String(tm.getDate()).padStart(2, "0")}`;
+  const day = d === todayStr ? "Today" : d === tomorrow ? "Tomorrow" : new Date(d + "T12:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return `${day} at ${t}`;
+}
 const SOURCE_LABELS = { told: "you told me", inferred: "inferred", to_confirm: "needs confirmation" };
 
 // ---------- helpers ----------
@@ -80,6 +90,7 @@ function itemMeta(i) {
   if (i.scheduled) bits.push(`planned ${i.scheduled}`);
   if (i.due) bits.push(`due ${i.due}`);
   if (i.review_date) bits.push(`review ${i.review_date}`);
+  if (i.remind_at && !i.reminder_fired && i.status === "open") bits.push(`🔔 ${esc(fmtWhen(i.remind_at))}`);
   if (i.postpone_count) bits.push(`postponed ${i.postpone_count}x`);
   const parent = i.parent_id && state.items.find((p) => p.id === i.parent_id);
   if (parent) bits.push(`in ${esc(parent.title)}`);
@@ -122,7 +133,11 @@ function proposalsHtml(list) {
 
 function render() {
   const open = state.items.filter((i) => i.status === "open");
-  $("#model-name").textContent = `Model: ${state.model}`;
+  const b = state.brain;
+  const on = [b.claude && "Claude", b.groq && "Groq", "Ollama"].filter(Boolean).join(", ");
+  $("#model-name").textContent = state.settings.private || b.provider === "local" ? `Private: thinking locally with ${b.local}` : `Brains: ${on}`;
+  $("#chat-deep").disabled = !!state.settings.private;
+  $$(".private-toggle").forEach((el) => (el.checked = !!state.settings.private));
 
   // Today
   $("#proposals").innerHTML = proposalsHtml(state.proposals);
@@ -137,7 +152,7 @@ function render() {
 
   // Chat
   $("#chat-log").innerHTML = state.chat.length
-    ? state.chat.map((m) => `<div class="msg ${m.role}">${m.role === "assistant" ? md(m.content) : esc(m.content)}</div>`).join("")
+    ? state.chat.map((m) => `<div class="msg ${m.role}">${m.role === "assistant" ? md(m.content) + (m.brain ? `<div class="hint">${BRAIN_LABELS[m.brain] || m.brain}</div>` : "") : esc(m.content)}</div>`).join("")
     : '<div class="empty">Tell me what\'s on your mind. I can help you get clear on it, plan it, decide, or map it out.</div>';
   $("#chat-proposals").innerHTML = proposalsHtml(state.proposals);
 
@@ -158,6 +173,27 @@ function render() {
         <hr>${md(r.summary)}</details>`).join("")
     : '<div class="empty">No reviews yet.</div>';
 
+  // Notifications and reminders
+  const unread = state.notifications.filter((n) => !n.read);
+  $("#notifications").innerHTML = unread.length ? `<div class="card notice"><div class="row" style="justify-content:space-between;margin:0"><h2 style="margin:0">🔔 ${unread.length} new</h2><button class="small ghost" data-nact="read">Mark all read</button></div>
+    ${unread.slice(0, 6).map((n) => `<div class="item"><div class="body"><b>${esc(n.title)}</b><div class="meta">${esc(n.body)}</div></div>
+      ${n.item_id ? `<button class="small" data-ract="done" data-rid="${n.item_id}">Done</button><button class="small ghost" data-ract="snooze" data-rid="${n.item_id}">Snooze 1h</button>` : ""}
+      ${n.review ? `<button class="small" data-start-review="${n.review}">Start</button>` : ""}</div>`).join("")}</div>` : "";
+  const upcoming = open.filter((i) => i.remind_at && !i.reminder_fired).sort((a, b) => a.remind_at.localeCompare(b.remind_at));
+  $("#reminders-list").innerHTML = upcoming.length
+    ? upcoming.slice(0, 8).map((i) => `<div class="item" data-id="${i.id}"><div class="body"><div class="title">${esc(i.title)}</div>
+        <div class="meta">${esc(fmtWhen(i.remind_at))}${i.repeat && i.repeat !== "none" ? ` · repeats ${esc(REPEAT_LABELS[i.repeat])}` : ""}</div></div></div>`).join("")
+    : '<div class="empty">No reminders yet. Open any item and set "Remind me at", or ask P.O.A to remind you.</div>';
+  const nf = $("#nudges-form"), nd = state.settings.nudges || {};
+  if (!nf.contains(document.activeElement)) {
+    nf.enabled.checked = !!nd.enabled;
+    for (const k of ["morning", "evening", "weekly_time", "weekly_day"]) nf[k].value = nd[k] ?? "";
+  }
+  const ph = state.phone;
+  $("#phone-status").innerHTML = ph.ntfy_topic
+    ? `Phone notifications are on (ntfy topic <code>${esc(ph.ntfy_topic)}</code>).${ph.public_url ? " Done and Snooze buttons work from the notification." : " Set POA_PUBLIC_URL to get Done and Snooze buttons on the phone."}`
+    : "Phone notifications are off. Follow the setup guide below to turn them on (about 5 minutes).";
+
   // Context
   $("#context-list").innerHTML = state.context.length
     ? ["told", "inferred", "to_confirm"].map((src) => {
@@ -177,14 +213,14 @@ async function busy(btn, fn) {
   try { await fn(); } catch (e) { toast(e.message); } finally { if (btn) btn.disabled = false; }
 }
 
-async function sendChat(text) {
+async function sendChat(text, deep = false) {
   showTab("chat");
   const log = $("#chat-log");
   if (!state.chat.length) log.innerHTML = "";
   log.insertAdjacentHTML("beforeend", `<div class="msg user">${esc(text)}</div><div class="msg assistant thinking">Thinking...</div>`);
   window.scrollTo(0, document.body.scrollHeight);
   try {
-    await api("POST", "/api/chat", { text });
+    await api("POST", "/api/chat", { text, deep });
   } catch (e) {
     toast(e.message);
   }
@@ -209,7 +245,7 @@ $("#chat-form").addEventListener("submit", (e) => {
   const text = $("#chat-text").value.trim();
   if (!text) return;
   $("#chat-text").value = "";
-  busy(e.submitter, () => sendChat(text));
+  busy(e.submitter, () => sendChat(text, $("#chat-deep").checked));
 });
 $("#chat-text").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#chat-form").requestSubmit(); }
@@ -257,7 +293,8 @@ function openItem(item) {
     .filter((i) => ["goal", "project", "direction"].includes(i.type) && i.status === "open" && i.id !== item?.id)
     .map((i) => `<option value="${i.id}">${esc(TYPE_LABELS[i.type])}: ${esc(i.title)}</option>`).join("");
   const v = item || { type: "task", priority: "medium", status: "open" };
-  for (const f of ["type", "title", "notes", "priority", "status", "scheduled", "due", "review_date", "next_action", "parent_id"]) form[f].value = v[f] || "";
+  for (const f of ["type", "title", "notes", "priority", "status", "scheduled", "due", "review_date", "next_action", "parent_id", "remind_at"]) form[f].value = v[f] || "";
+  form.repeat.value = v.repeat || "none";
   form.reason.value = "";
   dialog.showModal();
 }
@@ -270,7 +307,8 @@ dialog.addEventListener("close", () => busy(null, async () => {
     if (confirm(`Delete "${editing.title}"? This cannot be undone. (Marking it dropped keeps the history.)`)) await api("DELETE", `/api/items/${editing.id}`);
   } else if (action === "save") {
     const data = Object.fromEntries(new FormData(form));
-    for (const k of ["scheduled", "due", "review_date", "parent_id"]) if (!data[k]) data[k] = null;
+    for (const k of ["scheduled", "due", "review_date", "parent_id", "remind_at"]) if (!data[k]) data[k] = null;
+    if (editing && data.remind_at === editing.remind_at && data.repeat === editing.repeat) { delete data.remind_at; delete data.repeat; }
     if (editing) await api("PATCH", `/api/items/${editing.id}`, data);
     else await api("POST", "/api/items", data);
   }
@@ -336,6 +374,60 @@ document.addEventListener("click", (e) => {
     await refresh();
   });
 });
+$$(".private-toggle").forEach((el) => el.addEventListener("change", (e) => busy(null, async () => {
+  await api("PUT", "/api/settings", { private: e.target.checked });
+  toast(e.target.checked ? "Private on: thinking stays on this computer" : "Private off");
+  await refresh();
+})));
 $("#proactivity").addEventListener("change", (e) => busy(null, async () => { await api("PUT", "/api/settings", { proactivity: e.target.value }); toast("Saved"); }));
 
-refresh().catch((e) => toast(e.message));
+// Reminder actions
+document.addEventListener("click", (e) => {
+  const t = e.target;
+  if (t.dataset.nact === "read") return busy(t, async () => { await api("POST", "/api/notifications/read"); await refresh(); });
+  if (!t.dataset.ract) return;
+  busy(t, async () => {
+    await api("POST", `/api/reminders/${t.dataset.rid}/${t.dataset.ract}`);
+    toast(t.dataset.ract === "done" ? "Done" : "Snoozed for an hour");
+    await refresh();
+  });
+});
+$("#nudges-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const f = e.target;
+  busy(e.submitter, async () => {
+    await api("PUT", "/api/settings", { nudges: { enabled: f.enabled.checked, morning: f.morning.value, evening: f.evening.value, weekly_day: Number(f.weekly_day.value), weekly_time: f.weekly_time.value } });
+    toast("Nudge times saved"); await refresh();
+  });
+});
+$("#test-notification").addEventListener("click", (e) => busy(e.target, async () => {
+  const r = await api("POST", "/api/notifications/test");
+  toast(r.phone.sent ? "Sent. Check your phone." : `Saved in the app, but not sent to the phone: ${r.phone.reason}`);
+  await refresh();
+}));
+$("#enable-browser-notifications").addEventListener("click", async () => {
+  if (!("Notification" in window)) return toast("This browser doesn't support notifications. Use the ntfy app instead.");
+  const p = await Notification.requestPermission();
+  toast(p === "granted" ? "Notifications allowed while P.O.A is open" : "Notifications were not allowed");
+});
+
+// While P.O.A is open, check for new reminders every 30 seconds and show them.
+function announceNew() {
+  const seen = localStorage.getItem("poa-last-notification") || "";
+  const fresh = state.notifications.filter((n) => !n.read && n.at > seen);
+  if (!fresh.length) return;
+  localStorage.setItem("poa-last-notification", fresh[0].at);
+  if (!seen) return; // first load: don't replay old ones
+  for (const n of fresh.slice(0, 3)) {
+    if ("Notification" in window && Notification.permission === "granted") new Notification(n.title, { body: n.body, icon: "icons/icon-192.png", tag: n.id });
+    else toast(`🔔 ${n.title}`);
+  }
+}
+setInterval(() => {
+  if (document.querySelector("dialog[open], .thinking")) return;
+  refresh().then(announceNew).catch(() => {});
+}, 30000);
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+refresh().then(announceNew).catch((e) => toast(e.message));
