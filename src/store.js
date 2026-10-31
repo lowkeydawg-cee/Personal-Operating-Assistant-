@@ -10,19 +10,31 @@ const ITEM_TYPES = [
   "habit", "decision", "commitment", "open_loop", "thought",
 ];
 const CONTEXT_SOURCES = ["told", "inferred", "to_confirm"];
+const REPEATS = ["none", "daily", "weekdays", "weekly", "monthly"];
+
+const DEFAULT_NUDGES = { enabled: true, morning: "08:00", evening: "21:00", weekly_day: 0, weekly_time: "18:00" };
 
 function emptyDb() {
-  return { items: [], context: [], reviews: [], chat: [], settings: { proactivity: "medium", private: false } };
+  return {
+    items: [], context: [], reviews: [], chat: [], proposals: [], notifications: [],
+    settings: { proactivity: "medium", private: false, nudges: { ...DEFAULT_NUDGES }, nudges_sent: {} },
+  };
 }
 
+// One shared copy in memory, so the reminder scheduler and web requests never
+// overwrite each other's changes. Saved to disk after every change.
+let cache = null;
 function load() {
+  if (cache) return cache;
   try {
     const db = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-    return { ...emptyDb(), ...db };
+    const base = emptyDb();
+    cache = { ...base, ...db, settings: { ...base.settings, ...db.settings, nudges: { ...DEFAULT_NUDGES, ...(db.settings?.nudges || {}) } } };
   } catch (err) {
-    if (err.code === "ENOENT") return emptyDb();
-    throw err;
+    if (err.code !== "ENOENT") throw err;
+    cache = emptyDb();
   }
+  return cache;
 }
 
 function save(db) {
@@ -50,6 +62,9 @@ function createItem(db, input) {
     next_action: input.next_action || "",
     parent_id: input.parent_id || null,
     energy: input.energy || null, // high | medium | low
+    remind_at: input.remind_at || null, // local time, "YYYY-MM-DDTHH:MM"
+    repeat: REPEATS.includes(input.repeat) ? input.repeat : "none",
+    reminder_fired: false,
     postpone_count: 0,
     history: [],
     created_at: now(),
@@ -65,7 +80,7 @@ function updateItem(db, itemId, patch) {
   const item = db.items.find((i) => i.id === itemId);
   if (!item) return null;
   const allowed = ["type", "title", "notes", "status", "priority", "due", "scheduled",
-    "review_date", "next_action", "parent_id", "energy"];
+    "review_date", "next_action", "parent_id", "energy", "remind_at", "repeat"];
   // Moving a date later counts as a postponement, so repeated misses become visible.
   for (const field of ["due", "scheduled"]) {
     if (patch[field] && item[field] && patch[field] > item[field]) {
@@ -74,6 +89,8 @@ function updateItem(db, itemId, patch) {
     }
   }
   for (const key of allowed) if (key in patch) item[key] = patch[key];
+  if ("remind_at" in patch) item.reminder_fired = false;
+  if (item.repeat && !REPEATS.includes(item.repeat)) item.repeat = "none";
   if (patch.status === "done" && !item.completed_at) {
     item.completed_at = now();
     item.history.push({ at: now(), event: "completed", note: patch.reason || "" });
@@ -83,4 +100,4 @@ function updateItem(db, itemId, patch) {
   return item;
 }
 
-module.exports = { load, save, createItem, updateItem, id, now, ITEM_TYPES, CONTEXT_SOURCES, DATA_FILE };
+module.exports = { load, save, createItem, updateItem, id, now, ITEM_TYPES, CONTEXT_SOURCES, REPEATS, DATA_FILE };
