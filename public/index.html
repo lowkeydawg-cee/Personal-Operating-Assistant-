@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P.O.A</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>P.O.A <span class="sub">Personal Operating Assistant</span></h1>
+    <nav>
+      <button data-tab="today" class="active">Today</button>
+      <button data-tab="chat">Talk</button>
+      <button data-tab="items">My system</button>
+      <button data-tab="reviews">Reviews</button>
+      <button data-tab="context">About me</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="tab-today" class="tab active">
+      <form id="capture" class="capture">
+        <input id="capture-text" placeholder="What's on your mind? Capture it here..." autocomplete="off">
+        <select id="capture-type">
+          <option value="ai">Let P.O.A sort it</option>
+          <option value="thought">Thought</option>
+          <option value="task">Task</option>
+          <option value="commitment">Commitment</option>
+          <option value="open_loop">Open loop</option>
+          <option value="goal">Goal</option>
+          <option value="project">Project</option>
+          <option value="decision">Decision</option>
+          <option value="habit">Habit</option>
+        </select>
+        <button type="submit">Capture</button>
+      </form>
+      <div id="proposals"></div>
+      <div class="grid">
+        <div class="card"><h2>Needs attention</h2><div id="flags"></div></div>
+        <div class="card"><h2>Today</h2><div id="today-list"></div></div>
+      </div>
+      <div class="card"><h2>Quick start</h2>
+        <div class="row">
+          <button class="ghost" data-start-review="morning">Morning check-in</button>
+          <button class="ghost" data-start-review="evening">End-of-day review</button>
+          <button class="ghost" data-start-review="weekly">Weekly review</button>
+          <button class="ghost" data-start-review="monthly">Monthly review</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-chat" class="tab">
+      <div id="chat-log"></div>
+      <div id="chat-proposals"></div>
+      <form id="chat-form" class="chat-form">
+        <textarea id="chat-text" rows="3" placeholder="Think out loud, ask for a plan, a decision, or a mind map... (Enter to send, Shift+Enter for a new line)"></textarea>
+        <div class="row">
+          <button type="submit">Send</button>
+          <button type="button" class="ghost" id="chat-clear">Clear conversation</button>
+          <span class="hint" id="model-name"></span>
+        </div>
+      </form>
+    </section>
+
+    <section id="tab-items" class="tab">
+      <div class="row">
+        <select id="filter-type"><option value="">All types</option></select>
+        <select id="filter-status">
+          <option value="open">Open</option>
+          <option value="done">Done</option>
+          <option value="dropped">Dropped</option>
+          <option value="">All</option>
+        </select>
+        <button class="ghost" id="new-item">+ Add item</button>
+      </div>
+      <div id="items-list"></div>
+    </section>
+
+    <section id="tab-reviews" class="tab">
+      <div class="row">
+        <button class="ghost" data-start-review="morning">Morning check-in</button>
+        <button class="ghost" data-start-review="evening">End-of-day review</button>
+        <button class="ghost" data-start-review="weekly">Weekly review</button>
+        <button class="ghost" data-start-review="monthly">Monthly review</button>
+      </div>
+      <form id="review-form" class="card hidden"></form>
+      <div id="review-result"></div>
+      <h2>Past reviews</h2>
+      <div id="reviews-list"></div>
+    </section>
+
+    <section id="tab-context" class="tab">
+      <p class="hint">What P.O.A knows about you. Everything is labeled as something you <b>told</b> it, something it <b>inferred</b>, or something that <b>needs confirmation</b>. Edit or delete anything.</p>
+      <form id="context-form" class="row">
+        <input id="ctx-category" placeholder="Category (value, routine, energy...)" style="max-width:220px">
+        <input id="ctx-text" placeholder="Something about you worth remembering">
+        <label class="inline"><input type="checkbox" id="ctx-sensitive"> Sensitive</label>
+        <button type="submit">Add</button>
+      </form>
+      <div id="context-list"></div>
+      <div class="card">
+        <h2>Settings and export</h2>
+        <div class="row">
+          <label>Proactivity
+            <select id="proactivity">
+              <option value="low">Low: only when it really matters</option>
+              <option value="medium">Medium</option>
+              <option value="high">High: point things out often</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <a class="button ghost" href="/api/export.md" target="_blank">Snapshot for Claude (Markdown)</a>
+          <a class="button ghost" href="/api/export.json">Download full backup (JSON)</a>
+        </div>
+        <p class="hint">The Markdown snapshot leaves out anything marked sensitive. Paste it into a Claude project to give it your current context.</p>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="item-dialog">
+    <form id="item-form" method="dialog">
+      <h2 id="item-dialog-title">Item</h2>
+      <label>Type <select name="type"></select></label>
+      <label>Title <input name="title" required></label>
+      <label>Notes <textarea name="notes" rows="3"></textarea></label>
+      <div class="row">
+        <label>Priority <select name="priority"><option>high</option><option selected>medium</option><option>low</option></select></label>
+        <label>Status <select name="status"><option>open</option><option>done</option><option>dropped</option></select></label>
+      </div>
+      <div class="row">
+        <label>Scheduled <input type="date" name="scheduled"></label>
+        <label>Due <input type="date" name="due"></label>
+        <label>Review on <input type="date" name="review_date"></label>
+      </div>
+      <label>Next action <input name="next_action" placeholder="Smallest realistic next step"></label>
+      <label>Part of <select name="parent_id"><option value="">(none)</option></select></label>
+      <label>Reason for change (optional, helps reviews) <input name="reason"></label>
+      <div class="row">
+        <button value="save">Save</button>
+        <button value="cancel" class="ghost" formnovalidate>Cancel</button>
+        <button value="delete" class="danger" id="item-delete" formnovalidate>Delete</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>
