@@ -183,3 +183,12 @@ test("reviews use Claude, and export works", async () => {
   assert.doesNotMatch(mdText, /Private thing/);
   assert.match(mdText, /Call the dentist/);
 });
+
+test("a commitment with a planned day or reminder is not flagged as undated", async () => {
+  const { data: c } = await call("POST", "/api/items", { type: "commitment", title: "Call the bank", scheduled: "2030-01-01" });
+  const { data: d } = await call("POST", "/api/items", { type: "commitment", title: "Undated promise" });
+  const { data: s } = await call("GET", "/api/state");
+  const undated = s.flags.filter((f) => f.kind === "commitment_no_date").map((f) => f.item_id);
+  assert.ok(!undated.includes(c.id));
+  assert.ok(undated.includes(d.id));
+});

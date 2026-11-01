@@ -19,7 +19,7 @@ function computeFlags(db) {
     if (i.type === "project" && !i.next_action && !open.some((c) => c.parent_id === i.id && c.type === "task"))
       add("no_next_action", i, "Project has no next action");
     if (i.type === "goal" && !i.review_date) add("no_review_date", i, "Goal has no review date");
-    if (i.type === "commitment" && !i.due) add("commitment_no_date", i, "Commitment has no date");
+    if (i.type === "commitment" && !i.due && !i.scheduled && !i.remind_at) add("commitment_no_date", i, "Commitment has no date");
     if (i.review_date && i.review_date <= t) add("review_due", i, `Review was due ${i.review_date}`);
   }
 
